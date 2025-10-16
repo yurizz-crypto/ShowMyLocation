@@ -1,13 +1,16 @@
 package com.itsd83.showmylocation;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
@@ -20,15 +23,16 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.GoogleMap.OnMapClickListener;
+import com.google.android.gms.maps.GoogleMap.OnMarkerClickListener;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
-import com.google.android.gms.tasks.OnSuccessListener;
 
-public class MapsActivity extends FragmentActivity implements OnMapReadyCallback {
+public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, OnMapClickListener, OnMarkerClickListener {
     private GoogleMap mMap;
     private FusedLocationProviderClient fusedLocationClient;
     private Marker myCurrLocationMarker;
@@ -66,6 +70,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
         mMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+        mMap.setOnMapClickListener(this);
+        mMap.setOnMarkerClickListener(this); // Only supported marker listener
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -77,6 +83,49 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             mMap.setMyLocationEnabled(true);
             startLocationUpdates();
         }
+    }
+
+    @Override
+    public void onMapClick(@NonNull LatLng latLng) {
+        MarkerOptions markerOptions = new MarkerOptions();
+        markerOptions.position(latLng);
+        markerOptions.title("Pinned Location");
+        markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
+        mMap.addMarker(markerOptions);
+    }
+
+    @Override
+    public boolean onMarkerClick(@NonNull Marker marker) {
+        LatLng pos = marker.getPosition();
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Location Options")
+                .setMessage("What would you like to do?");
+
+        builder.setPositiveButton("Open in Maps", (dialog, which) -> {
+            String uri = "geo:" + pos.latitude + "," + pos.longitude + "?q=" + pos.latitude + "," + pos.longitude;
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+            intent.setPackage("com.google.android.apps.maps");
+            if (intent.resolveActivity(getPackageManager()) != null) {
+                startActivity(intent);
+            } else {
+                String webUrl = "https://maps.google.com/?q=" + pos.latitude + "," + pos.longitude;
+                Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUrl));
+                startActivity(webIntent);
+            }
+        });
+
+        if ("Pinned Location".equals(marker.getTitle())) {
+            builder.setNegativeButton("Remove", (dialog, which) -> {
+                marker.remove();
+                Toast.makeText(MapsActivity.this, "Pinned location removed", Toast.LENGTH_SHORT).show();
+            });
+        }
+
+        builder.setNeutralButton("Cancel", null);
+        builder.show();
+
+        return true;
     }
 
     private void startLocationUpdates() {
@@ -104,7 +153,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
         mMap.animateCamera(CameraUpdateFactory.zoomTo(11));
 
-        // Stop updates after first location to save battery
         fusedLocationClient.removeLocationUpdates(locationCallback);
     }
 
