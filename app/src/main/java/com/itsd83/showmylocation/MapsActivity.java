@@ -33,10 +33,10 @@ import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, OnMapClickListener, OnMarkerClickListener {
-    private GoogleMap mMap;
-    private FusedLocationProviderClient fusedLocationClient;
-    private Marker myCurrLocationMarker;
-    private LocationCallback locationCallback;
+    private GoogleMap member_map;
+    private FusedLocationProviderClient fused_location_client;
+    private Marker user_current_location;
+    private LocationCallback remember_location;
     private static final int LOCATION_PERMISSION_REQUEST = 99;
 
     @Override
@@ -44,7 +44,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        fused_location_client = LocationServices.getFusedLocationProviderClient(this);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             checkLocationPermission();
@@ -54,7 +54,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
-        locationCallback = new LocationCallback() {
+        remember_location = new LocationCallback() {
             @Override
             public void onLocationResult(@NonNull LocationResult locationResult) {
                 if (locationResult == null) return;
@@ -68,30 +68,62 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     @Override
     public void onMapReady(GoogleMap googleMap) {
-        mMap = googleMap;
-        mMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
-        mMap.setOnMapClickListener(this);
-        mMap.setOnMarkerClickListener(this);
+        member_map = googleMap;
+        member_map.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+        member_map.setOnMapClickListener(this);
+        member_map.setOnMarkerClickListener(this);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                     == PackageManager.PERMISSION_GRANTED) {
-                mMap.setMyLocationEnabled(true);
+                member_map.setMyLocationEnabled(true);
                 startLocationUpdates();
             }
         } else {
-            mMap.setMyLocationEnabled(true);
+            member_map.setMyLocationEnabled(true);
             startLocationUpdates();
         }
     }
 
     @Override
     public void onMapClick(@NonNull LatLng latLng) {
-        MarkerOptions markerOptions = new MarkerOptions();
-        markerOptions.position(latLng);
-        markerOptions.title("Pinned Location");
-        markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
-        mMap.addMarker(markerOptions);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Name this Location");
+
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        input.setHint("Enter a name");
+
+        android.widget.FrameLayout container = new android.widget.FrameLayout(this);
+        android.widget.FrameLayout.LayoutParams params = new  android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        int margin = (int) (20 * getResources().getDisplayMetrics().density);
+        params.leftMargin = margin;
+        params.rightMargin = margin;
+        input.setLayoutParams(params);
+        container.addView(input);
+
+        builder.setView(container);
+
+        builder.setPositiveButton("Add Pin", (dialog, which) -> {
+            String markerTitle = input.getText().toString();
+
+            if (markerTitle.trim().isEmpty()) {
+                markerTitle = "Pinned Location";
+            }
+
+            MarkerOptions markerOptions = new MarkerOptions();
+            markerOptions.position(latLng);
+            markerOptions.title(markerTitle);
+            markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
+            member_map.addMarker(markerOptions);
+        });
+
+        builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
+
+        builder.show();
     }
 
     @Override
@@ -99,7 +131,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         LatLng pos = marker.getPosition();
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Location Options")
+        builder.setTitle(marker.getTitle())
                 .setMessage("What would you like to do?");
 
         builder.setPositiveButton("Open in Maps", (dialog, which) -> {
@@ -115,7 +147,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             }
         });
 
-        if ("Pinned Location".equals(marker.getTitle())) {
+        if (!"My Position".equals(marker.getTitle())) {
             builder.setNegativeButton("Remove", (dialog, which) -> {
                 marker.remove();
                 Toast.makeText(MapsActivity.this, "Pinned location removed", Toast.LENGTH_SHORT).show();
@@ -135,12 +167,12 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
                 .setWaitForAccurateLocation(false)
                 .build();
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null);
+        fused_location_client.requestLocationUpdates(locationRequest, remember_location, null);
     }
 
     private void onLocationChanged(Location location) {
-        if (myCurrLocationMarker != null) {
-            myCurrLocationMarker.remove();
+        if (user_current_location != null) {
+            user_current_location.remove();
         }
 
         LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
@@ -148,12 +180,12 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         markerOptions.position(latLng);
         markerOptions.title("My Position");
         markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_MAGENTA));
-        myCurrLocationMarker = mMap.addMarker(markerOptions);
+        user_current_location = member_map.addMarker(markerOptions);
 
-        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-        mMap.animateCamera(CameraUpdateFactory.zoomTo(11));
+        member_map.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+        member_map.animateCamera(CameraUpdateFactory.zoomTo(11));
 
-        fusedLocationClient.removeLocationUpdates(locationCallback);
+        fused_location_client.removeLocationUpdates(remember_location);
     }
 
     private boolean checkLocationPermission() {
@@ -170,8 +202,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         if (requestCode == LOCATION_PERMISSION_REQUEST) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    if (mMap != null) {
-                        mMap.setMyLocationEnabled(true);
+                    if (member_map != null) {
+                        member_map.setMyLocationEnabled(true);
                         startLocationUpdates();
                     }
                 }
@@ -184,8 +216,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (fusedLocationClient != null && locationCallback != null) {
-            fusedLocationClient.removeLocationUpdates(locationCallback);
+        if (fused_location_client != null && remember_location != null) {
+            fused_location_client.removeLocationUpdates(remember_location);
         }
     }
 }
