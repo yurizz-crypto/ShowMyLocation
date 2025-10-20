@@ -2,6 +2,7 @@ package com.itsd83.showmylocation;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.net.Uri;
@@ -32,12 +33,19 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+
 public class MapsActivity extends FragmentActivity implements OnMapReadyCallback, OnMapClickListener, OnMarkerClickListener {
     private GoogleMap member_map;
     private FusedLocationProviderClient fused_location_client;
     private Marker user_current_location;
     private LocationCallback remember_location;
+    private Location last_known_location;
     private static final int LOCATION_PERMISSION_REQUEST = 99;
+    private static final String PREFS_NAME = "MarkerPrefs";
+    private static final String MARKERS_KEY = "customMarkers";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -47,7 +55,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         fused_location_client = LocationServices.getFusedLocationProviderClient(this);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            checkLocationPermission();
+            check_location_permission();
         }
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
@@ -60,7 +68,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 if (locationResult == null) return;
                 Location location = locationResult.getLastLocation();
                 if (location != null) {
-                    onLocationChanged(location);
+                    on_location_changed(location);
                 }
             }
         };
@@ -73,15 +81,17 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         member_map.setOnMapClickListener(this);
         member_map.setOnMarkerClickListener(this);
 
+        load_markers();
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                     == PackageManager.PERMISSION_GRANTED) {
                 member_map.setMyLocationEnabled(true);
-                startLocationUpdates();
+                start_location_updates();
             }
         } else {
             member_map.setMyLocationEnabled(true);
-            startLocationUpdates();
+            start_location_updates();
         }
     }
 
@@ -119,6 +129,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             markerOptions.title(markerTitle);
             markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
             member_map.addMarker(markerOptions);
+
+            save_marker(markerTitle, latLng.latitude, latLng.longitude);
         });
 
         builder.setNegativeButton("Cancel", (dialog, which) -> dialog.cancel());
@@ -131,8 +143,22 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         LatLng pos = marker.getPosition();
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle(marker.getTitle())
-                .setMessage("What would you like to do?");
+        builder.setTitle(marker.getTitle());
+
+        String message = "What would you like to do?";
+        if (last_known_location != null && !"My Position".equals(marker.getTitle())) {
+            float[] results = new float[1];
+            Location.distanceBetween(
+                    last_known_location.getLatitude(),
+                    last_known_location.getLongitude(),
+                    pos.latitude,
+                    pos.longitude,
+                    results
+            );
+            double distanceKm = results[0] / 1000.0;
+            message = String.format(Locale.getDefault(), "Distance from you: %.2f km\n\nWhat would you like to do?", distanceKm);
+        }
+        builder.setMessage(message);
 
         builder.setPositiveButton("Open in Maps", (dialog, which) -> {
             String uri = "geo:" + pos.latitude + "," + pos.longitude + "?q=" + pos.latitude + "," + pos.longitude;
@@ -141,7 +167,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             if (intent.resolveActivity(getPackageManager()) != null) {
                 startActivity(intent);
             } else {
-                String webUrl = "https://maps.google.com/?q=" + pos.latitude + "," + pos.longitude;
+                String webUrl = "http://maps.google.com/?q=" + pos.latitude + "," + pos.longitude;
                 Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUrl));
                 startActivity(webIntent);
             }
@@ -149,6 +175,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
         if (!"My Position".equals(marker.getTitle())) {
             builder.setNegativeButton("Remove", (dialog, which) -> {
+                remove_marker(marker.getTitle(), pos.latitude, pos.longitude);
                 marker.remove();
                 Toast.makeText(MapsActivity.this, "Pinned location removed", Toast.LENGTH_SHORT).show();
             });
@@ -160,17 +187,20 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         return true;
     }
 
-    private void startLocationUpdates() {
+    private void start_location_updates() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
-        LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
+        LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
                 .setWaitForAccurateLocation(false)
+                .setMinUpdateDistanceMeters(10)
                 .build();
         fused_location_client.requestLocationUpdates(locationRequest, remember_location, null);
     }
 
-    private void onLocationChanged(Location location) {
+    private void on_location_changed(Location location) {
+        last_known_location = location;
+
         if (user_current_location != null) {
             user_current_location.remove();
         }
@@ -182,13 +212,73 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_MAGENTA));
         user_current_location = member_map.addMarker(markerOptions);
 
-        member_map.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-        member_map.animateCamera(CameraUpdateFactory.zoomTo(11));
-
-        fused_location_client.removeLocationUpdates(remember_location);
+        if (!member_map.getCameraPosition().target.equals(latLng)) {
+            member_map.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+            member_map.animateCamera(CameraUpdateFactory.zoomTo(11));
+            fused_location_client.removeLocationUpdates(remember_location);
+        }
     }
 
-    private boolean checkLocationPermission() {
+    private void save_marker(String title, double lat, double lng) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+
+        Set<String> existingMarkers = prefs.getStringSet(MARKERS_KEY, new HashSet<>());
+
+        Set<String> mutableMarkers = new HashSet<>(existingMarkers);
+
+        String newMarker = title + "|" + lat + "|" + lng;
+        mutableMarkers.add(newMarker);
+
+        editor.putStringSet(MARKERS_KEY, mutableMarkers);
+        editor.apply();
+    }
+
+    private void load_markers() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        Set<String> markers = prefs.getStringSet(MARKERS_KEY, new HashSet<>());
+
+        for (String markerString : markers) {
+            String[] parts = markerString.split("\\|");
+
+            if (parts.length == 3) {
+                try {
+                    String title = parts[0];
+                    double lat = Double.parseDouble(parts[1]);
+                    double lng = Double.parseDouble(parts[2]);
+
+                    LatLng latLng = new LatLng(lat, lng);
+                    MarkerOptions markerOptions = new MarkerOptions();
+                    markerOptions.position(latLng);
+                    markerOptions.title(title);
+                    markerOptions.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
+                    member_map.addMarker(markerOptions);
+
+                } catch (NumberFormatException e) {
+                    android.util.Log.e("MapsActivity", "Corrupted marker data: " + markerString, e);
+                }
+            }
+        }
+    }
+
+    private void remove_marker(String title, double lat, double lng) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+
+        Set<String> existingMarkers = prefs.getStringSet(MARKERS_KEY, new HashSet<>());
+        Set<String> mutableMarkers = new HashSet<>(existingMarkers);
+
+        String markerToRemove = title + "|" + lat + "|" + lng;
+
+        if (mutableMarkers.contains(markerToRemove)) {
+            mutableMarkers.remove(markerToRemove);
+            editor.putStringSet(MARKERS_KEY, mutableMarkers);
+            editor.apply();
+        }
+    }
+
+
+    private boolean check_location_permission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_PERMISSION_REQUEST);
             return false;
@@ -204,7 +294,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                     if (member_map != null) {
                         member_map.setMyLocationEnabled(true);
-                        startLocationUpdates();
+                        start_location_updates();
                     }
                 }
             } else {
